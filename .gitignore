@@ -1,0 +1,6 @@
+.vscode/
+.ipynb_checkpoints/
+__pycache__
+qdrant_storage/
+beir-data/
+venv/
