@@ -47,9 +47,7 @@ class SimpleRag(Model):
             "temperature": self.temperature 
         } 
 
-        # answer = self.llm_model.chat(payload=payload).choices[0].message.content
-        
-        answer = ''
+        answer = self.llm_model.chat(payload=payload).choices[0].message.content
 
         return ModelAnswer(
             query=query,

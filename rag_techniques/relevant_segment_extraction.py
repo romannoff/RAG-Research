@@ -1,10 +1,10 @@
 from gigachat import GigaChat, context
-from matplotlib import pyplot as plt
+import bisect
 
 from database.vbase import QdrantBase
 from src.model import Model, ModelAnswer
 from src.config import Config
-from src.prompts import simple_rag_prompt, reranker_prompt
+from src.prompts import simple_rag_prompt
 
 settings = Config.from_yaml("config.yaml")
 context.session_id_cvar.set(settings.session_id)
@@ -34,29 +34,12 @@ class SegmentExtractionRAG(Model):
         scores = [chunk['score'] for chunk in chunks]
         segments = self.get_best_segments(scores)
         
-        x = []
-        for start, end in segments:
-            x.extend(list(range(start, end)))
-        y = [scores[c] for c in x]
-
-        # Основной график
-        plt.plot(list(range(100)), scores[:100], color="gray", linewidth=1)
-        # plt.scatter(x, y, color="red")
-
-        # Выделение интервалов
-        # for start, end in segments:
-            # plt.plot(x[start-1:end+1], y[start-1:end+1], color="red", linewidth=2)
-            
-        plt.savefig("my_plot2.png", dpi=300)
-        
         new_chunks = []
 
         for segment in segments:
             new_chunks += chunks[segment[0]:segment[1]]
         
         chunks = [chunk['chunk_text'] for chunk in new_chunks]
-
-        # chunks = self.reranker(query, chunks)
 
         prompt = simple_rag_prompt(query, chunks)
 
@@ -87,12 +70,14 @@ class SegmentExtractionRAG(Model):
                         min_segment_length: int = 2,
                         gap_merge: int = 1):
         """
-        Версия с бонусом за длину и постобработкой:
-        - score = alpha_max*max + alpha_topk*mean_topk + alpha_mean*mean + length_bonus*(length/max_length)
+
+        SCORE = alpha_max*max + alpha_topk*mean_topk + alpha_mean*mean + length_bonus*(length/max_length)
+
         - фильтруем кандидаты по minimum_value
-        - решаем DP (capacity = overall_max_length) для неперекрывающихся сегментов
-        - затем: расширяем выбранные сегменты туда, где есть свободная capacity и соседние чанки неотрицательны
+        - решаем DP для неперекрывающихся сегментов
+        - затем: расширяем выбранные сегменты туда, где есть свободная вместимость и соседние чанки неотрицательны
         - затем: объединяем сегменты, между которыми gap <= gap_merge
+
         Параметры length_bonus и min_segment_length помогут получить длиннее группы.
         """
         n = len(relevance_values)
@@ -102,7 +87,7 @@ class SegmentExtractionRAG(Model):
         # 1) генерируем кандидатов
         candidates = []
         for start in range(n):
-            for end in range(start + 1, min(n, start + max_length) + 1):  # end exclusive
+            for end in range(start + 1, min(n, start + max_length) + 1):
                 length = end - start
                 window = relevance_values[start:end]
                 s_sum = sum(window)
@@ -139,7 +124,6 @@ class SegmentExtractionRAG(Model):
         m = len(candidates)
         ends = [candidates[i]["end"] for i in range(m)]
         starts = [candidates[i]["start"] for i in range(m)]
-        import bisect
         p = [-1] * m
         for i in range(m):
             j = bisect.bisect_right(ends, starts[i]) - 1
@@ -173,7 +157,7 @@ class SegmentExtractionRAG(Model):
                 i -= 1
             else:
                 cand = candidates[i - 1]
-                chosen.append([cand["start"], cand["end"]])  # use list for mutability
+                chosen.append([cand["start"], cand["end"]])
                 cap -= cand["length"]
                 i = p[i - 1] + 1
         chosen.reverse()
@@ -183,25 +167,20 @@ class SegmentExtractionRAG(Model):
         used_len = sum(e - s for s, e in chosen)
         free_capacity = overall_max_length - used_len
         if free_capacity > 0:
-            # try expanding each seg by grabbing adjacent non-negative chunks
             for seg in chosen:
-                # expand left
                 while free_capacity > 0 and seg[0] > 0 and relevance_values[seg[0] - 1] >= 0:
                     seg[0] -= 1
                     free_capacity -= 1
-                # expand right
                 while free_capacity > 0 and seg[1] < n and relevance_values[seg[1]] >= 0:
                     seg[1] += 1
                     free_capacity -= 1
 
-        # 6) Merge close segments (gap <= gap_merge)
         if not chosen:
             return []
         merged = []
         cur_s, cur_e = chosen[0]
         for s, e in chosen[1:]:
             if s - cur_e <= gap_merge:
-                # merge
                 cur_e = max(cur_e, e)
             else:
                 merged.append((cur_s, cur_e))
