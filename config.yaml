@@ -1,0 +1,5 @@
+base_url: "URL локальной LLM"
+model: 'Qwen2.5-7B-AWQ'
+password: 'password'  # так делать плохо
+token: 'Токен для работы с GigaChat'
+session_id: '8cc3a6f5-7777-47ae-9622-3073d617eeb
